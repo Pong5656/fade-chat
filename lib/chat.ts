@@ -49,7 +49,7 @@ export function chatTopics(roomCode: string): ChatTopics {
 // ---------------------------------------------------------------------------
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-export function randomRoomCode(length = 5): string {
+export function randomRoomCode(length = ROOM_CODE_LENGTH): string {
   const values = new Uint32Array(length);
   if (typeof globalThis.crypto?.getRandomValues === "function") {
     globalThis.crypto.getRandomValues(values);
@@ -65,12 +65,15 @@ export function randomRoomCode(length = 5): string {
   return out;
 }
 
+/** ความยาวรหัสห้องที่ใช้จริง (ตัวอักษรและตัวเลขที่อ่านไม่สับสน) */
+export const ROOM_CODE_LENGTH = 5;
+
 export function normalizeRoomCode(code: string): string {
-  return code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, ROOM_CODE_LENGTH);
 }
 
 export function isValidRoomCode(code: string): boolean {
-  return normalizeRoomCode(code).length >= 4;
+  return normalizeRoomCode(code).length === ROOM_CODE_LENGTH;
 }
 
 export function joinUrl(code: string): string {

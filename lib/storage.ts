@@ -1,8 +1,10 @@
 /**
- * ชั้นจัดการข้อมูลบนเบราว์เซอร์ (localStorage / sessionStorage)
+ * ชั้นจัดการข้อมูลบนเบราว์เซอร์ (localStorage)
  *
  * ไม่มีข้อมูลผู้ใช้ใดถูกส่งขึ้นเซิร์ฟเวอร์ของตนเอง ทั้งหมดเก็บไว้ในเครื่องผู้ใช้
  */
+
+import { DEFAULT_FILTER_WORDS } from "@/lib/chat";
 
 const NAMESPACE = "fade-chat:";
 const isBrowser = typeof window !== "undefined";
@@ -22,7 +24,7 @@ function writeRaw(key: string, value: string | null): void {
     if (value === null) window.localStorage.removeItem(NAMESPACE + key);
     else window.localStorage.setItem(NAMESPACE + key, value);
   } catch {
-    /* เต็มหรือถูกบล็อก: ข้าม */
+    /* ที่เก็บเต็มหรือถูกบล็อก: ข้าม */
   }
 }
 
@@ -86,4 +88,25 @@ export function readRevealNames(): boolean {
 
 export function writeRevealNames(on: boolean): void {
   writeRaw(StorageKey.reveal, on ? "on" : "off");
+}
+
+/** รายการคำที่ถูกกรองของผู้ใช้ (ค่าเริ่มต้นมาจาก DEFAULT_FILTER_WORDS) */
+export function readFilterWords(): string[] {
+  const raw = readRaw(StorageKey.filterWords);
+  if (raw === null) return [...DEFAULT_FILTER_WORDS];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [...DEFAULT_FILTER_WORDS];
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return [...DEFAULT_FILTER_WORDS];
+  }
+}
+
+export function writeFilterWords(words: string[]): void {
+  try {
+    writeRaw(StorageKey.filterWords, JSON.stringify([...new Set(words)]));
+  } catch {
+    /* ignore */
+  }
 }
