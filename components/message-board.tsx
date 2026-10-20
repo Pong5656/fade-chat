@@ -11,13 +11,14 @@ import {
 } from "@/lib/chat";
 
 /**
- * กระดานข้อความ (ephemeral chat)
+ * กระดานข้อความ สไตล์แอปแชต
  *
- * - เดินเวลาทุก 200 มิลลิวินาที เพื่อให้แถบเวลาถอยหลังลื่นและตัดข้อความหมดอายุตรงเวลา
- * - ข้อความที่หมดอายุจะถูกถอดออกจากรายการทันที
- * - เลื่อนลงล่างอัตโนมัติเมื่อมีข้อความใหม่ ถ้าผู้ใช้ยังอยู่ใกล้ล่างสุด
- * - แสดงเฉพาะเนื้อความที่จำเป็น: ชื่อผู้ส่ง ข้อความ และแถบเวลาที่เหลือ
+ * - ข้อความของตัวเองชิดขวา คนอื่นชิดซ้าย พร้อมรูปย่อและชื่อ
+ * - เดินเวลาทุก 200 มิลลิวินาที เพื่อให้แถบชีวิตลื่นและตัดข้อความหมดอายุตรงเวลา
+ * - ถ้าข้อความเดียวกันส่งติดกันจากคนเดิม จะไม่แสดงชื่อซ้ำ (เหมือนแอปแชตจริง)
  */
+const GROUP_WINDOW_MS = 60_000;
+
 export function MessageBoard({
   messages,
   selfId,
@@ -38,13 +39,11 @@ export function MessageBoard({
   const stickToBottom = useRef(true);
   const expiredRef = useRef<Set<string>>(new Set());
 
-  // เดินเวลาให้แถบชีวิตอัปเดต
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 200);
     return () => window.clearInterval(timer);
   }, []);
 
-  // แจ้งฝ่ายที่ดูแลรายการให้ถอดข้อความที่หมดอายุ
   const expireRef = useRef(onExpire);
   expireRef.current = onExpire;
   useEffect(() => {
@@ -58,7 +57,6 @@ export function MessageBoard({
     if (dead.length > 0) expireRef.current(dead);
   }, [messages, now]);
 
-  // เลื่อนตามข้อความใหม่ ถ้าผู้ใช้ยังอยู่ท้ายกระดาน
   const count = messages.length;
   useEffect(() => {
     const element = scrollRef.current;
@@ -81,38 +79,65 @@ export function MessageBoard({
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="feed-scroll flex min-h-[320px] flex-1 flex-col gap-2 overflow-y-auto px-4 py-4 lg:h-[calc(100vh-320px)]"
+      className="feed-scroll chat-canvas flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4 sm:px-5"
       aria-live="polite"
       aria-label="กระดานข้อความ"
     >
       {visible.length === 0 ? (
-        <p className="m-auto max-w-xs text-center text-sm text-slate-400 dark:text-slate-500">
-          ยังไม่มีข้อความ พิมพ์แล้วกด Enter ได้เลย
-        </p>
+        <div className="m-auto flex max-w-xs flex-col items-center gap-2 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/70 text-xl shadow-sm dark:bg-slate-800/70">
+            💬
+          </div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            ยังไม่มีข้อความ เริ่มพิมพ์ได้เลย
+          </p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            ข้อความสั้นจะหายไว ข้อความยาวจะอยู่นานขึ้น
+          </p>
+        </div>
       ) : (
-        visible.map((message) => (
-          <MessageRow
-            key={message.id}
-            message={message}
-            now={now}
-            mine={message.senderId === selfId}
-            revealNames={revealNames}
-            filterWords={filterWords}
-            showRemaining={showRemaining}
-          />
-        ))
+        visible.map((message, index) => {
+          const mine = message.senderId === selfId;
+          const previous = visible[index - 1];
+          const sameSender =
+            previous &&
+            previous.senderId === message.senderId &&
+            message.sentAt - previous.sentAt < GROUP_WINDOW_MS;
+          const next = visible[index + 1];
+          const continues =
+            next &&
+            next.senderId === message.senderId &&
+            next.sentAt - message.sentAt < GROUP_WINDOW_MS &&
+            remainingMs(next, now) > 0;
+
+          return (
+            <Bubble
+              key={message.id}
+              message={message}
+              now={now}
+              mine={mine}
+              revealNames={revealNames}
+              filterWords={filterWords}
+              showRemaining={showRemaining}
+              showName={!sameSender}
+              tail={!continues}
+            />
+          );
+        })
       )}
     </div>
   );
 }
 
-function MessageRow({
+function Bubble({
   message,
   now,
   mine,
   revealNames,
   filterWords,
   showRemaining,
+  showName,
+  tail,
 }: {
   message: ChatMessage;
   now: number;
@@ -120,57 +145,135 @@ function MessageRow({
   revealNames: boolean;
   filterWords: string[];
   showRemaining: boolean;
+  showName: boolean;
+  tail: boolean;
 }) {
   const ratio = lifeRatio(message, now);
   const left = remainingMs(message, now);
   const masked = maskBlockedWords(message.text, filterWords);
   const name = revealNames ? message.senderName : shortId(message.senderId);
-  const isAnnounce = message.kind === "announce";
+  const fading = ratio < 0.28;
 
   return (
-    <article
+    <div
       className={[
-        "animate-fade-in rounded-xl border px-3.5 py-2.5 text-[15px]",
-        isAnnounce
-          ? "border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-800"
-          : mine
-            ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60"
-            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950",
+        "animate-bubble group flex w-full gap-2",
+        mine ? "justify-end" : "justify-start",
+        showName ? "mt-3" : "mt-0",
       ].join(" ")}
+      style={{ opacity: fading ? 0.35 + ratio * 2.3 : 1, transition: "opacity 380ms linear" }}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
-          {name}
-          {mine ? <span className="ml-1 font-normal text-slate-400">· คุณ</span> : null}
-          {isAnnounce ? (
-            <span className="ml-1.5 font-medium text-slate-400">ประกาศ</span>
+      {/* รูปย่อของคู่สนทนา (เฉพาะฝั่งซ้าย) */}
+      {!mine ? (
+        <div className="w-8 shrink-0 self-end">
+          {tail ? (
+            <Avatar name={name} senderId={message.senderId} />
           ) : null}
-        </span>
+        </div>
+      ) : null}
+
+      <div className={["flex max-w-[82%] flex-col sm:max-w-[70%]", mine ? "items-end" : "items-start"].join(" ")}>
+        {showName ? (
+          <span className="mb-1 px-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+            {name}
+            {message.kind === "announce" ? (
+              <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                ประกาศ
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+
+        <div
+          className={[
+            "relative",
+            mine
+              ? "rounded-[18px] rounded-br-[6px] bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+              : "rounded-[18px] rounded-bl-[6px] bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100",
+            message.kind === "announce"
+              ? "ring-1 ring-amber-300 dark:ring-amber-700"
+              : "",
+            "px-3.5 py-2",
+          ].join(" ")}
+        >
+          <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
+            {masked.text}
+          </p>
+
+          {/* แถบชีวิตของข้อความ */}
+          <div
+            className={[
+              "mt-1.5 h-[3px] w-full overflow-hidden rounded-full",
+              mine ? "bg-white/20 dark:bg-slate-900/15" : "bg-slate-200/80 dark:bg-slate-700/70",
+            ].join(" ")}
+          >
+            <div
+              className={[
+                "life-bar h-full rounded-full",
+                ratio > 0.5
+                  ? mine
+                    ? "bg-emerald-300"
+                    : "bg-emerald-400"
+                  : ratio > 0.25
+                    ? "bg-amber-400"
+                    : "bg-rose-400",
+              ].join(" ")}
+              style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%` }}
+            />
+          </div>
+        </div>
+
+        {/* เวลาที่เหลือ (เฉพาะเจ้าของห้องที่เปิดไว้) */}
         {showRemaining ? (
-          <span className="shrink-0 tabular-nums text-xs text-slate-400 dark:text-slate-500">
+          <span className="mt-0.5 px-1 text-[11px] tabular-nums text-slate-400 dark:text-slate-500">
             {formatRemaining(left)}
           </span>
         ) : null}
       </div>
-
-      <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed text-slate-800 dark:text-slate-100">
-        {masked.text}
-      </p>
-
-      <div className="mt-2 h-px w-full overflow-hidden bg-slate-200 dark:bg-slate-800">
-        <div
-          className={[
-            "life-bar h-full",
-            ratio > 0.5 ? "bg-emerald-400" : ratio > 0.25 ? "bg-amber-400" : "bg-rose-400",
-          ].join(" ")}
-          style={{ width: `${Math.max(0, Math.min(100, ratio * 100))}%` }}
-        />
-      </div>
-    </article>
+    </div>
   );
 }
 
-/** รหัสย่อสำหรับโหมดไม่เปิดเผยชื่อ */
+const AVATAR_TONES = [
+  "bg-rose-500",
+  "bg-amber-500",
+  "bg-emerald-500",
+  "bg-sky-500",
+  "bg-violet-500",
+  "bg-cyan-500",
+  "bg-orange-500",
+  "bg-teal-500",
+];
+
+/** รูปย่อจากตัวอักษรแรกของชื่อ พร้อมสีคงที่ตามรหัสผู้ใช้ */
+function Avatar({ name, senderId }: { name: string; senderId: string }) {
+  const initial = firstGrapheme(name);
+  const tone = AVATAR_TONES[hash(senderId) % AVATAR_TONES.length];
+  return (
+    <span
+      className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ${tone}`}
+      aria-hidden="true"
+    >
+      {initial}
+    </span>
+  );
+}
+
+function firstGrapheme(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "?";
+  const chars = Array.from(trimmed);
+  return chars[0].toUpperCase();
+}
+
+function hash(value: string): number {
+  let total = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    total = (total * 31 + value.charCodeAt(i)) % 100000;
+  }
+  return total;
+}
+
 function shortId(id: string): string {
   return `ผู้ใช้ ${id.slice(-4)}`;
 }
